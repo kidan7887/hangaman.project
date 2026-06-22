@@ -3,15 +3,20 @@ package hangman.logic;
 import java.sql.*;
 import java.util.*;
 
+// Purpose: This class manages the SQLite database for Hangman game statistics.
+// It saves completed games and creates a leaderboard from stored results.
 public class DatabaseStatsManager {
 
+    // Stores the SQLite database connection path.
     private final String url = "jdbc:sqlite:hangman_stats.db";
 
+    // Constructor: loads the SQLite driver and creates the stats table when the object is made.
     public DatabaseStatsManager() {
         loadDriver();
         createTable();
     }
 
+    // Loads the SQLite JDBC driver so Java can connect to the database.
     private void loadDriver() {
         try {
             Class.forName("org.sqlite.JDBC");
@@ -20,10 +25,12 @@ public class DatabaseStatsManager {
         }
     }
 
+    // Creates and returns a connection to the Hangman statistics database.
     private Connection getConnection() throws SQLException {
         return DriverManager.getConnection(url);
     }
 
+    // Creates the game_stats table if it does not already exist.
     private void createTable() {
         String sql = """
                 CREATE TABLE IF NOT EXISTS game_stats (
@@ -44,6 +51,7 @@ public class DatabaseStatsManager {
         }
     }
 
+    // Saves one completed Hangman game into the database.
     public void logGame(String playerName, String playedWord, String difficultyLevel, boolean gameWon) {
         String sql = """
                 INSERT INTO game_stats 
@@ -66,6 +74,7 @@ public class DatabaseStatsManager {
         }
     }
 
+    // Returns the leaderboard by grouping games by player and ordering by most wins.
     public ArrayList<String> getLeaderboard() {
         ArrayList<String> leaderboard = new ArrayList<>();
 
@@ -82,6 +91,7 @@ public class DatabaseStatsManager {
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(sql)) {
 
+            // Reads each row from the ResultSet and formats it into a readable leaderboard line.
             while (rs.next()) {
                 String row = "Player: " + rs.getString("player_name")
                         + " | Games Played: " + rs.getInt("games_played")
