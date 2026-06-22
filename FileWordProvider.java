@@ -1,65 +1,118 @@
 package hangman.logic;
 
-import java.io.*;
+import java.sql.*;
 import java.util.*;
 
-public class FileWordProvider implements WordProvider {
+// Purpose: Manages database operations for Hangman game statistics.
+// Handles database setup, game logging, and leaderboard generation.
+public class DatabaseStatsManager {
 
-    private final File wordFile = new File("words.txt");
-    private final Random random = new Random();
+    // Database connection URL for the SQLite file.
+    private final String url = "jdbc:sqlite:hangman_stats.db";
 
-    public FileWordProvider() {
-        if (!wordFile.exists()) {
-            createDefaultWordFile();
+    // Initializes the database manager and prepares the database.
+    public DatabaseStatsManager() {
+        loadDriver();
+        createTable();
+    }
+
+    // Loads the SQLite JDBC driver into memory.
+    private void loadDriver() {
+        try {
+            Class.forName("org.sqlite.JDBC");
+        } catch (ClassNotFoundException e) {
+            System.out.println("SQLite JDBC Driver not found: " + e.getMessage());
         }
     }
 
-    private void createDefaultWordFile() {
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(wordFile))) {
-            writer.write("VARIABLE:EASY");
-            writer.newLine();
-            writer.write("LOOP:EASY");
-            writer.newLine();
-            writer.write("CLASS:MEDIUM");
-            writer.newLine();
-            writer.write("REUSABILITY:MEDIUM");
-            writer.newLine();
-            writer.write("ENCAPSULATION:HARD");
-            writer.newLine();
-            writer.write("POLYMORPHISM:HARD");
-            writer.newLine();
-        } catch (IOException e) {
-            System.out.println("Error creating words.txt: " + e.getMessage());
+    // Creates and returns a database connection.
+    private Connection getConnection() throws SQLException {
+        return DriverManager.getConnection(url);
+    }
+
+    // Creates the game statistics table if it does not already exist.
+    private void createTable() {
+        String sql = """
+                CREATE TABLE IF NOT EXISTS game_stats (
+                    player_name TEXT,
+                    played_word TEXT,
+                    difficulty_level TEXT,
+                    game_won BOOLEAN
+                )
+                """;
+
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement()) {
+
+            stmt.execute(sql);
+
+        } catch (SQLException e) {
+            System.out.println("Error creating table: " + e.getMessage());
         }
     }
 
-    public String getWord(String difficulty) {
-        ArrayList<String> matchingWords = new ArrayList<>();
+    // Records a completed game in the database.
+    public void logGame(String playerName, String playedWord,
+                        String difficultyLevel, boolean gameWon) {
 
-        try (BufferedReader reader = new BufferedReader(new FileReader(wordFile))) {
-            String line;
+        String sql = """
+                INSERT INTO game_stats
+                (player_name, played_word, difficulty_level, game_won)
+                VALUES (?, ?, ?, ?)
+                """;
 
-            while ((line = reader.readLine()) != null) {
-                String[] parts = line.split(":");
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
-                if (parts.length == 2) {
-                    String word = parts[0].trim();
-                    String level = parts[1].trim();
+            // Assigns values to the SQL placeholders.
+            pstmt.setString(1, playerName);
+            pstmt.setString(2, playedWord);
+            pstmt.setString(3, difficultyLevel);
+            pstmt.setBoolean(4, gameWon);
 
-                    if (level.equalsIgnoreCase(difficulty)) {
-                        matchingWords.add(word);
-                    }
-                }
+            // Executes the insert operation.
+            pstmt.executeUpdate();
+
+        } catch (SQLException e) {
+            System.out.println("Error saving game stats: " + e.getMessage());
+        }
+    }
+
+    // Generates a leaderboard sorted by total wins.
+    public ArrayList<String> getLeaderboard() {
+
+        // Stores formatted leaderboard entries.
+        ArrayList<String> leaderboard = new ArrayList<>();
+
+        String sql = """
+                SELECT player_name,
+                       COUNT(*) AS games_played,
+                       SUM(CASE WHEN game_won = 1 THEN 1 ELSE 0 END) AS wins
+                FROM game_stats
+                GROUP BY player_name
+                ORDER BY wins DESC
+                """;
+
+        try (Connection conn = getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+
+            // Processes each database record.
+            while (rs.next()) {
+
+                // Formats player statistics for display.
+                String row = "Player: " + rs.getString("player_name")
+                        + " | Games Played: " + rs.getInt("games_played")
+                        + " | Wins: " + rs.getInt("wins");
+
+                leaderboard.add(row);
             }
 
-        } catch (IOException e) {
-            System.out.println("Error reading words.txt: " + e.getMessage());
+        } catch (SQLException e) {
+            System.out.println("Error loading leaderboard: " + e.getMessage());
         }
 
-        if (matchingWords.isEmpty()) {
-            return "JAVA";
-        }
-
-        return matchingWords.get(random.nextInt(matchingWords.size()));
+        // Returns the completed leaderboard.
+        return leaderboard;
     }
 }
