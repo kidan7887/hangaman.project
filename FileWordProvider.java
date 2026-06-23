@@ -84,7 +84,7 @@ public class HybridWordProvider implements WordProvider {
 
     // Retrieves a random word that matches the requested difficulty level.
     // The word may come from the shared file, the user's database entries, or both.
-    @Override
+ 
     public String getWord(String difficulty) {
 
         List<String> words = new ArrayList<>();
@@ -153,7 +153,7 @@ public class HybridWordProvider implements WordProvider {
 
     // Saves a new custom word to the database for the current player.
     // The word is stored permanently and does not modify words.txt.
-    @Override
+
     public void addWord(String word, String difficulty) {
 
         String sql = """
