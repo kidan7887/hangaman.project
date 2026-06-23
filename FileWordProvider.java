@@ -1,22 +1,36 @@
 package hangman.logic;
 
+import java.io.*;
 import java.sql.*;
 import java.util.*;
 
-// Purpose: Manages database operations for Hangman game statistics.
-// Handles database setup, game logging, and leaderboard generation.
-public class DatabaseStatsManager {
+// Purpose: This class combines file-based words and database-stored custom words.
+// It allows each player to access shared team words and their own saved words.
+public class HybridWordProvider implements WordProvider {
 
-    // Database connection URL for the SQLite file.
-    private final String url = "jdbc:sqlite:hangman_stats.db";
+    // Stores the current player's username.
+    private final String username;
 
-    // Initializes the database manager and prepares the database.
-    public DatabaseStatsManager() {
+    // Represents the shared words.txt file.
+    private final File wordsFile;
+
+    // Used to randomly select a word from the available list.
+    private final Random random = new Random();
+
+    // SQLite database connection URL.
+    private final String url = "jdbc:sqlite:hangman_words.db";
+
+    // Constructor: receives the active player's username and prepares resources.
+    public HybridWordProvider(String username) {
+        this.username = username;
+        this.wordsFile = new File("words.txt");
+
         loadDriver();
-        createTable();
+        createWordsFileIfMissing();
+        createCustomWordsTable();
     }
 
-    // Loads the SQLite JDBC driver into memory.
+    // Loads the SQLite JDBC driver so Java can communicate with the database.
     private void loadDriver() {
         try {
             Class.forName("org.sqlite.JDBC");
@@ -30,14 +44,31 @@ public class DatabaseStatsManager {
         return DriverManager.getConnection(url);
     }
 
-    // Creates the game statistics table if it does not already exist.
-    private void createTable() {
+    // Creates words.txt with starter words if the file does not already exist.
+    private void createWordsFileIfMissing() {
+        if (!wordsFile.exists()) {
+            try (PrintWriter writer = new PrintWriter(new FileWriter(wordsFile))) {
+
+                writer.println("VARIABLE:EASY");
+                writer.println("CLASS:EASY");
+                writer.println("METHOD:MEDIUM");
+                writer.println("ENCAPSULATION:HARD");
+                writer.println("POLYMORPHISM:HARD");
+
+            } catch (IOException e) {
+                System.out.println("Error creating words.txt: " + e.getMessage());
+            }
+        }
+    }
+
+    // Creates the custom_words database table if it does not already exist.
+    private void createCustomWordsTable() {
+
         String sql = """
-                CREATE TABLE IF NOT EXISTS game_stats (
-                    player_name TEXT,
-                    played_word TEXT,
-                    difficulty_level TEXT,
-                    game_won BOOLEAN
+                CREATE TABLE IF NOT EXISTS custom_words (
+                    word TEXT,
+                    difficulty TEXT,
+                    username TEXT
                 )
                 """;
 
@@ -47,72 +78,100 @@ public class DatabaseStatsManager {
             stmt.execute(sql);
 
         } catch (SQLException e) {
-            System.out.println("Error creating table: " + e.getMessage());
+            System.out.println("Error creating custom_words table: " + e.getMessage());
         }
     }
 
-    // Records a completed game in the database.
-    public void logGame(String playerName, String playedWord,
-                        String difficultyLevel, boolean gameWon) {
+    // Retrieves a random word that matches the requested difficulty level.
+    // The word may come from the shared file, the user's database entries, or both.
+    @Override
+    public String getWord(String difficulty) {
+
+        List<String> words = new ArrayList<>();
+
+        loadWordsFromFile(words, difficulty);
+        loadWordsFromDatabase(words, difficulty);
+
+        if (words.isEmpty()) {
+            return "DEFAULT";
+        }
+
+        return words.get(random.nextInt(words.size()));
+    }
+
+    // Reads words from words.txt and adds matching difficulty words to the list.
+    private void loadWordsFromFile(List<String> words, String difficulty) {
+
+        try (BufferedReader reader = new BufferedReader(new FileReader(wordsFile))) {
+
+            String line;
+
+            while ((line = reader.readLine()) != null) {
+
+                String[] parts = line.split(":");
+
+                if (parts.length == 2) {
+
+                    String word = parts[0].trim();
+                    String wordDifficulty = parts[1].trim();
+
+                    if (wordDifficulty.equalsIgnoreCase(difficulty)) {
+                        words.add(word);
+                    }
+                }
+            }
+
+        } catch (IOException e) {
+            System.out.println("Error reading words.txt: " + e.getMessage());
+        }
+    }
+
+    // Retrieves custom words belonging to the current player from the database.
+    private void loadWordsFromDatabase(List<String> words, String difficulty) {
 
         String sql = """
-                INSERT INTO game_stats
-                (player_name, played_word, difficulty_level, game_won)
-                VALUES (?, ?, ?, ?)
+                SELECT word FROM custom_words
+                WHERE difficulty = ? AND username = ?
                 """;
 
         try (Connection conn = getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
-            // Assigns values to the SQL placeholders.
-            pstmt.setString(1, playerName);
-            pstmt.setString(2, playedWord);
-            pstmt.setString(3, difficultyLevel);
-            pstmt.setBoolean(4, gameWon);
+            pstmt.setString(1, difficulty);
+            pstmt.setString(2, username);
 
-            // Executes the insert operation.
-            pstmt.executeUpdate();
+            ResultSet rs = pstmt.executeQuery();
 
-        } catch (SQLException e) {
-            System.out.println("Error saving game stats: " + e.getMessage());
-        }
-    }
-
-    // Generates a leaderboard sorted by total wins.
-    public ArrayList<String> getLeaderboard() {
-
-        // Stores formatted leaderboard entries.
-        ArrayList<String> leaderboard = new ArrayList<>();
-
-        String sql = """
-                SELECT player_name,
-                       COUNT(*) AS games_played,
-                       SUM(CASE WHEN game_won = 1 THEN 1 ELSE 0 END) AS wins
-                FROM game_stats
-                GROUP BY player_name
-                ORDER BY wins DESC
-                """;
-
-        try (Connection conn = getConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
-
-            // Processes each database record.
             while (rs.next()) {
-
-                // Formats player statistics for display.
-                String row = "Player: " + rs.getString("player_name")
-                        + " | Games Played: " + rs.getInt("games_played")
-                        + " | Wins: " + rs.getInt("wins");
-
-                leaderboard.add(row);
+                words.add(rs.getString("word"));
             }
 
         } catch (SQLException e) {
-            System.out.println("Error loading leaderboard: " + e.getMessage());
+            System.out.println("Error loading custom words: " + e.getMessage());
         }
+    }
 
-        // Returns the completed leaderboard.
-        return leaderboard;
+    // Saves a new custom word to the database for the current player.
+    // The word is stored permanently and does not modify words.txt.
+    @Override
+    public void addWord(String word, String difficulty) {
+
+        String sql = """
+                INSERT INTO custom_words (word, difficulty, username)
+                VALUES (?, ?, ?)
+                """;
+
+        try (Connection conn = getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setString(1, word.toUpperCase());
+            pstmt.setString(2, difficulty.toUpperCase());
+            pstmt.setString(3, username);
+
+            pstmt.executeUpdate();
+
+        } catch (SQLException e) {
+            System.out.println("Error saving custom word: " + e.getMessage());
+        }
     }
 }
